@@ -4,21 +4,18 @@ const { Command } = require("commander");
 const express = require("express");
 const bodyParser = require("body-parser");
 
-const { readFileSync } = require("fs");
-// const { ec } = require("elliptic");
-
-const { Wallet, Tinycoin, Transaction } = require("./blockchain");
+const { Wallet, Tinycoin } = require("./blockchain");
 const genesisStates = require("./genesisStates");
 const { readWallet } = require("./utils");
 const {
   P2P,
   genBroadcastProposeBlockFunc,
   genBroadcastTxFunc,
+  recoverTx,
 } = require("./p2p");
 
-// const EC = new ec("secp256k1");
 const program = new Command();
-program.name("TinyNode").description("node for tiny coin").version("1.0.0");
+program.name("Tinychain").description("node for tiny coin").version("1.0.0");
 
 program
   .command("chain")
@@ -29,7 +26,6 @@ program
   .description("run tinychain server")
   .action(async (options) => {
     const wallet = new Wallet(readWallet(options.wallet));
-    console.log(`wallet pubkey = ${wallet.pubKey}`)
     const blockchain = new Tinycoin(wallet, genesisStates);
     const endpoints = options.p2pEndpoints
       ? options.p2pEndpoints.split(",")
@@ -62,17 +58,29 @@ function startServer(port, blockchain, broadcastTx) {
     res.send({ balance: blockchain.store.balanceOf(req.params.address) });
   });
 
-  app.post("/sendTransaction", (req, res) => {
-    const { from, to, amount, signature } = req.body;
-    const tx = new Transaction(from, to, Number(amount), signature)
+  app.post("/sendTransaction", async (req, res) => {
+    const tx = recoverTx(req.body);
+    let receipt;
     try {
-      blockchain.pool.addTx(tx);
+      receipt = await blockchain.pool.addTx(tx);
     } catch (e) {
-      res.send({ msg: `fail.err: ${e.message}`})
-      return
+      res.send({ msg: `fail.err: ${e.message}` });
+      return;
     }
-    res.send({ msg: "success"})
+    res.send({ msg: "success" });
     broadcastTx(tx);
+  });
+
+  app.post("/callContract", async (req, res) => {
+    const tx = recoverTx(req.Body);
+    let result;
+    try {
+      result = await blockchain.statestore.callContract(tx.to, tx.data);
+    } catch (e) {
+      res.send({ msg: `fail. err: ${e.message}` });
+      return;
+    }
+    res.send({ result });
   });
 
   app.listen(port, () => {

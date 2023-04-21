@@ -69,12 +69,7 @@ class P2P {
         // トランザクションを受信した場合、トランザクションプールに追加
         case PacketTypes.Tx:
           try {
-            const tx = new Transaction(
-              packet.from,
-              packet.to,
-              Number(packet.amount),
-              packet.signature
-            );
+            const tx = recoverTx(packet);
             const isNew = self.chain.pool.addTx(tx); // トランザクションを自身のPoolに追加
             if (!isNew) break; // 新しいトランザクションでない場合は、ブロードキャストしない
             console.log(`succeed adding tx ${tx.hash}`);
@@ -88,13 +83,7 @@ class P2P {
         // 自分がプロポーザで2/3以上の賛同を得られた場合は、確定ブロックをブロードキャスト
         case PacketTypes.Vote:
           try {
-            const vote = new Vote(
-              packet.height,
-              packet.blockHash,
-              packet.voter,
-              packet.isYes,
-              packet.signature
-            );
+            const vote = recoverVote(packet);
             const isNew = self.chain.addVote(vote); // voteを自身に追加
             if (!isNew) break; // 新しいvoteでない場合は、ブロードキャストしない
             console.log(`succeed adding vote ${vote.hash}`);
@@ -157,16 +146,10 @@ class P2P {
               packet.height,
               packet.preHash,
               packet.timestamp,
-              packet.txs.map(
-                (t) =>
-                  new Transaction(t.from, t.to, Number(t.amount), t.signature)
-              ),
+              packet.txs.map((t) => recoverTx(tx)),
               packet.proposer,
               packet.stateRoot,
-              packet.votes.map(
-                (v) =>
-                  new Vote(v.height, v.blockHash, v.voter, v.isYes, v.signature)
-              ),
+              packet.votes.map((v) => recoverVote(v)),
               packet.signature
             );
             const isNew = self.chain.addBlock(b);
@@ -180,14 +163,11 @@ class P2P {
           break;
         // プロポーズブロックを受信した場合は、検証して正しい場合はYesに、不正の場合はNoに投票する
         case PacketTypes.PBlock: {
-          const txs = packet.txs.map(
-            (t) => new Transaction(t.from, t.to, Number(t.amount), t.signature)
-          );
           const b = new Block(
             packet.height,
             packet.preHash,
             packet.timestamp,
-            txs,
+            packet.txs.map((tx) => recoverTx(tx)),
             packet.proposer,
             packet.stateRoot,
             packet.votes,
@@ -281,4 +261,34 @@ const genBroadcastTxFunc = (p2p) =>
     );
   };
 
-module.exports = { P2P, genBroadcastProposeBlockFunc, genBroadcastTxFunc };
+const recoverTx = (txObj) => {
+  const { from, to, amount, data, signature } = txObj;
+  const gasPrice = txObj.gasPrice ? Number(txObj.gasPrice) : undefined;
+  const gasLimit = txObj.gasLimit ? Number(txObj.gasLimit) : undefined;
+  return new Transaction(
+    from,
+    to,
+    Number(amount),
+    data,
+    gasPrice,
+    gasLimit,
+    signature
+  );
+};
+
+const recoverVote = (voteObj) => {
+  new Vote(
+    voteObj.height,
+    voteObj.blockHash,
+    voteObj.voter,
+    voteObj.isYes,
+    voteObj.signature
+  );
+};
+
+module.exports = {
+  P2P,
+  genBroadcastProposeBlockFunc,
+  genBroadcastTxFunc,
+  recoverTx,
+};
